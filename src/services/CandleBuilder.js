@@ -235,7 +235,11 @@ class CandleBuilder {
 
             // Calcul du nombre de points attendus (basé uniquement sur les prix)
             const expectedPoints = (minutes * 60 * 1000) / this.updateInterval;
-            const qualityFactor = prices.length / expectedPoints;
+            let qualityFactor = prices.length / expectedPoints;
+            
+            // S'assurer que le quality_factor est entre 0 et 1
+            qualityFactor = Math.max(0, Math.min(1, qualityFactor));
+            
             logger.debug(`Points attendus: ${expectedPoints}, Points reçus: ${prices.length}, Qualité: ${(qualityFactor * 100).toFixed(1)}%`);
 
             // Récupération du volume si activé

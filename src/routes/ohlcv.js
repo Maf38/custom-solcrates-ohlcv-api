@@ -164,7 +164,7 @@ router.get('/:address/:timeframe', [
         
         const { address, timeframe } = req.params;
         const limit = req.query.limit || 100;
-        const start = req.query.start ? `"${req.query.start}"` : '-1h';
+        const start = req.query.start ? `"${req.query.start}"` : '-24h';
         const end = req.query.end ? `, stop: "${req.query.end}"` : '';
 
         logger.debug('Paramètres reçus:', { address, timeframe, limit, start, end });
@@ -221,7 +221,10 @@ router.get('/:address/:timeframe', [
                         low: null,
                         close: null,
                         volume: null,
-                        quality_factor: null
+                        quality_factor: null,
+                        rsi: null,
+                        rsi_quality: null,
+                        ema: null
                     });
                 }
                 
@@ -244,6 +247,15 @@ router.get('/:address/:timeframe', [
                         break;
                     case 'quality_factor':
                         data.quality_factor = row._value;
+                        break;
+                    case 'rsi':
+                        data.rsi = row._value;
+                        break;
+                    case 'rsi_quality':
+                        data.rsi_quality = row._value;
+                        break;
+                    case 'ema':
+                        data.ema = row._value;
                         break;
                     default:
                         logger.debug('Field non géré:', row._field);
