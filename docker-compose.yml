@@ -24,6 +24,7 @@ services:
     build: .
     ports:
       - "${PORT}:${PORT}"
+      - "9229:9229"  # Port de débogage Node.js
     env_file:
       - .env
     healthcheck:

@@ -28,13 +28,47 @@ tokensRouter.setCollectors(priceCollector, volumeCollector);
 app.use(express.json());
 
 // Configuration CORS
-app.use(cors());
+const corsOptions = {
+    origin: function (origin, callback) {
+        // En développement, autoriser toutes les origines et le port 3099
+        if (process.env.NODE_ENV === 'development') {
+            callback(null, true);
+        } else {
+            // En production, autoriser seulement les domaines spécifiques
+            const allowedOrigins = ['http://192.168.1.82:3002', 'http://localhost:3002', 'http://localhost:3099'];
+            if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'));
+            }
+        }
+    },
+    credentials: true,
+    optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 
 // Middleware de logging
 app.use((req, res, next) => {
     logger.http(`${req.method} ${req.url} - Body: ${JSON.stringify(req.body)}`);
     next();
 });
+
+// Middleware de gestion d'erreurs de validation
+const validationErrorHandler = (error, req, res, next) => {
+    if (error && error.array) {
+        logger.warn('Erreur de validation:', error.array());
+        return res.status(400).json({
+            status: 'error',
+            message: 'Paramètres invalides',
+            errors: error.array()
+        });
+    }
+    next(error);
+};
+
+app.use(validationErrorHandler);
 
 // Gestionnaire d'erreurs global
 app.use((err, req, res, next) => {

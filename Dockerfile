@@ -5,7 +5,9 @@ RUN apk add --no-cache \
     python3 \
     make \
     g++ \
-    wget
+    wget \
+    curl \
+    vim  # Pour l'édition en ligne de commande
 
 # Création du répertoire de l'application
 WORKDIR /app
@@ -22,5 +24,5 @@ COPY . .
 # Expose l'API
 EXPOSE 3002
 
-# Démarrage de l'application
-CMD ["node", "src/index.js"]
+# Démarrage de l'application avec débogage activé
+CMD ["node", "--inspect=0.0.0.0:9229", "src/index.js"]

@@ -150,18 +150,33 @@ class CandleBuilder {
             totalWeight += weight;
         }
 
-        // Calcul des moyennes initiales (14 premières périodes)
+        // Méthode Wilder originale pour le RSI
+        
+        // 1. Calcul de la moyenne simple (SMA) pour les 14 premières périodes
         let avgGain = changes.slice(0, 14).reduce((sum, c) => sum + c.gain, 0) / 14;
         let avgLoss = changes.slice(0, 14).reduce((sum, c) => sum + c.loss, 0) / 14;
 
-        // Calcul du RSI avec moyenne mobile exponentielle
+        // 2. Application de la méthode de lissage de Wilder pour les périodes suivantes
+        // Utilise un facteur de lissage de 1/14 (méthode Wilder)
+        // La formule est : avgU = ((avgU * 13) + U1) / 14
         for (let i = 14; i < changes.length; i++) {
             avgGain = ((avgGain * 13) + changes[i].gain) / 14;
             avgLoss = ((avgLoss * 13) + changes[i].loss) / 14;
         }
 
-        const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-        const rsi = 100 - (100 / (1 + rs));
+        // 3. Calcul du RSI selon Wilder
+        let rsi;
+        if (avgGain === 0 && avgLoss === 0) {
+            // Pas de mouvement = RSI neutre (50)
+            rsi = 50;
+        } else if (avgLoss === 0 && avgGain > 0) {
+            // Que des hausses = Surachat maximal (100)
+            rsi = 100;
+        } else {
+            // Formule standard : RSI = 100 - (100 / (1 + RS))
+            const rs = avgGain / avgLoss;
+            rsi = 100 - (100 / (1 + rs));
+        }
 
         // Calcul de la qualité du RSI
         // - Prend en compte les gaps (bougies manquantes)
@@ -185,7 +200,7 @@ class CandleBuilder {
                 from(bucket: "${process.env.INFLUXDB_BUCKET}")
                 |> range(start: ${endTime.toISOString()}, stop: ${new Date(endTime.getTime() + 1000).toISOString()})
                 |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-                |> filter(fn: (r) => r.token_address == "${token.contract_address}")
+                |> filter(fn: (r) => r.contract_address == "${token.contract_address}")
                 |> filter(fn: (r) => r.timeframe == "${timeframe}")
                 |> limit(n: 1)
             `;
