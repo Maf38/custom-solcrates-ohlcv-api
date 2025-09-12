@@ -93,6 +93,37 @@ const swaggerDefinition = {
                         description: 'Volume instantané'
                     }
                 }
+            },
+            RSIPerformance: {
+                type: 'object',
+                properties: {
+                    timestamp: {
+                        type: 'string',
+                        format: 'date-time'
+                    },
+                    rsi: {
+                        type: 'number',
+                        description: 'Valeur RSI de la bougie',
+                        minimum: 0,
+                        maximum: 100
+                    },
+                    price: {
+                        type: 'number',
+                        description: 'Prix de clôture de la bougie'
+                    },
+                    next_price: {
+                        type: 'number',
+                        description: 'Prix de clôture de la bougie suivante'
+                    },
+                    variation: {
+                        type: 'number',
+                        description: 'Variation en pourcentage'
+                    },
+                    timeframe: {
+                        type: 'string',
+                        description: 'Timeframe de la bougie'
+                    }
+                }
             }
         }
     },
@@ -377,6 +408,146 @@ const swaggerDefinition = {
                                 }
                             }
                         }
+                    }
+                }
+            }
+        },
+        '/api/ohlcv/rsi-performance/{address}/{timeframe}': {
+            get: {
+                summary: 'Analyse des performances basées sur le RSI',
+                description: 'Calcule la performance moyenne des bougies selon leur RSI et le type d\'opération',
+                parameters: [
+                    {
+                        in: 'path',
+                        name: 'address',
+                        required: true,
+                        schema: {
+                            type: 'string'
+                        },
+                        description: 'Adresse du contrat Solana'
+                    },
+                    {
+                        in: 'path',
+                        name: 'timeframe',
+                        required: true,
+                        schema: {
+                            type: 'string',
+                            enum: ['1m', '5m', '15m', '1h', '4h', '1d']
+                        },
+                        description: 'Intervalle de temps'
+                    },
+                    {
+                        in: 'query',
+                        name: 'rsi_target',
+                        required: true,
+                        schema: {
+                            type: 'number',
+                            minimum: 0,
+                            maximum: 100
+                        },
+                        description: 'Valeur RSI cible'
+                    },
+                    {
+                        in: 'query',
+                        name: 'operation',
+                        required: true,
+                        schema: {
+                            type: 'string',
+                            enum: ['achat', 'vente']
+                        },
+                        description: 'Type d\'opération (achat ou vente)'
+                    },
+                    {
+                        in: 'query',
+                        name: 'n',
+                        schema: {
+                            type: 'integer',
+                            minimum: 1,
+                            maximum: 100,
+                            default: 10
+                        },
+                        description: 'Nombre de bougies à analyser'
+                    },
+                    {
+                        in: 'query',
+                        name: 'negative_offset',
+                        schema: {
+                            type: 'number',
+                            minimum: 0,
+                            maximum: 50,
+                            default: 5
+                        },
+                        description: 'Offset négatif pour la plage RSI'
+                    },
+                    {
+                        in: 'query',
+                        name: 'positive_offset',
+                        schema: {
+                            type: 'number',
+                            minimum: 0,
+                            maximum: 50,
+                            default: 10
+                        },
+                        description: 'Offset positif pour la plage RSI'
+                    }
+                ],
+                responses: {
+                    '200': {
+                        description: 'Analyse RSI performance',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        status: {
+                                            type: 'string',
+                                            example: 'success'
+                                        },
+                                        data: {
+                                            type: 'object',
+                                            properties: {
+                                                token: {
+                                                    type: 'string'
+                                                },
+                                                rsi_target: {
+                                                    type: 'number'
+                                                },
+                                                operation: {
+                                                    type: 'string'
+                                                },
+                                                timeframe: {
+                                                    type: 'string'
+                                                },
+                                                total_bougies_trouvees: {
+                                                    type: 'integer',
+                                                    description: 'Nombre total de bougies dans la plage RSI'
+                                                },
+                                                bougies_valides: {
+                                                    type: 'integer',
+                                                    description: 'Nombre de bougies avec performance valide'
+                                                },
+                                                moyenne_variation: {
+                                                    type: 'number',
+                                                    description: 'Variation moyenne en pourcentage'
+                                                },
+                                                variations: {
+                                                    type: 'array',
+                                                    items: {
+                                                        $ref: '#/components/schemas/RSIPerformance'
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    '404': {
+                        description: 'Token non trouvé ou pas assez de données'
+                    },
+                    '500': {
+                        description: 'Erreur serveur'
                     }
                 }
             }
