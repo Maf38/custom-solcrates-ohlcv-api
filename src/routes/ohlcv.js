@@ -176,13 +176,34 @@ router.get('/:address/:timeframe', [
         logger.debug('Début de la route OHLCV');
         
         const { address, timeframe } = req.params;
-        const limit = req.query.limit || 100;
-        const start = req.query.start ? `"${req.query.start}"` : '-24h';
+        const requestedLimit = req.query.limit || 200;
+        
+        // Limiter à 200 bougies maximum pour ne pas faire ramer le système
+        const effectiveLimit = Math.min(requestedLimit, 200);
+        
+        // Calculer le range temporel pour obtenir environ effectiveLimit bougies
+        let start;
+        if (req.query.start) {
+            start = `"${req.query.start}"`;
+        } else {
+            const timeframeMinutes = getTimeframeMinutes(timeframe);
+            const totalMinutes = timeframeMinutes * effectiveLimit;
+            
+            // Convertir en format approprié pour InfluxDB
+            if (totalMinutes < 60) {
+                start = `-${totalMinutes}m`;
+            } else if (totalMinutes < 1440) {
+                start = `-${Math.ceil(totalMinutes / 60)}h`;
+            } else {
+                start = `-${Math.ceil(totalMinutes / 1440)}d`;
+            }
+        }
+        
         const end = req.query.end ? `, stop: "${req.query.end}"` : '';
 
-        logger.debug('Paramètres reçus:', { address, timeframe, limit, start, end });
+        logger.debug('Paramètres reçus:', { address, timeframe, requestedLimit, effectiveLimit, start, end });
 
-        logger.debug('Début récupération OHLCV:', { address, timeframe, limit, start, end });
+        logger.debug('Début récupération OHLCV:', { address, timeframe, effectiveLimit, start, end });
 
         // Vérifier si le token existe et est actif
         const token = await Token.findByAddress(address);
@@ -206,7 +227,7 @@ router.get('/:address/:timeframe', [
             |> filter(fn: (r) => r["contract_address"] == "${address}")
             |> filter(fn: (r) => r["timeframe"] == "${timeframe}")
             |> sort(columns: ["_time"], desc: true)
-            |> limit(n: ${limit})
+            |> limit(n: ${effectiveLimit})
         `;
 
         logger.debug('Requête OHLCV à exécuter:', { query });

@@ -43,7 +43,7 @@ class Token {
 
             const query = `
                 from(bucket: "${process.env.INFLUXDB_BUCKET}")
-                |> range(start: -30d)
+                |> range(start: -35d)
                 |> filter(fn: (r) => r["_measurement"] == "tokens")
                 |> filter(fn: (r) => r["contract_address"] == "${contractAddress}")
                 |> filter(fn: (r) => r["_field"] == "is_active")
@@ -78,15 +78,15 @@ class Token {
         try {
             logger.debug('Récupération de tous les tokens actifs');
 
+            // Chercher les tokens qui ont des données OHLCV dans les 3 derniers jours
             const query = `
                 from(bucket: "${process.env.INFLUXDB_BUCKET}")
-                |> range(start: -30d)
-                |> filter(fn: (r) => r["_measurement"] == "tokens")
-                |> filter(fn: (r) => r["_field"] == "is_active")
-                |> filter(fn: (r) => r["_value"] == "true")
-                |> keep(columns: ["contract_address", "symbol", "_value"])
+                |> range(start: -3d)
+                |> filter(fn: (r) => r["_measurement"] == "ohlcv")
+                |> filter(fn: (r) => r["_field"] == "close")
                 |> group(columns: ["contract_address", "symbol"])
-                |> last()
+                |> first()
+                |> keep(columns: ["contract_address", "symbol"])
             `;
 
             logger.debug('Requête InfluxDB:', query);
