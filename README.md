@@ -102,17 +102,41 @@ Ces variables sont utilisées à la fois pour :
      * Attendu : 12 points (60s/5s)
      * Si 10 points disponibles : qualité = 0.83
 
+## Architecture des données
+
+### SQLite (Source de vérité pour les tokens)
+- **Base de données** : `data/tokens.db`
+- **Table principale** : `tokens` (contract_address, symbol, is_active, created_at, updated_at)
+- **Rôle** : Détermine quels tokens sont suivis pour l'acquisition des données
+
+### InfluxDB (Stockage des données temporelles)
+- **Measurements** :
+  - `raw_prices` : Prix bruts collectés
+  - `raw_volumes` : Volumes bruts collectés  
+  - `ohlcv` : Bougies OHLCV calculées avec RSI
+- **Rôle** : Stockage pur des données temporelles, pas de logique métier
+
+### Flux de données
+1. **Ajout d'un token** → SQLite → Démarrage automatique de l'acquisition
+2. **Acquisition** → Données brutes dans InfluxDB
+3. **Construction des bougies** → Calcul OHLCV + RSI → InfluxDB
+4. **API** → SQLite pour la liste des tokens, InfluxDB pour les données
+
 ## API Routes
 
 Documentation complète disponible via Swagger UI : http://localhost:3002/api-docs
 
-### Tokens
+### Gestion des tokens
 
-- `POST /api/tokens` : Ajouter un nouveau token
-- `GET /api/tokens` : Liste tous les tokens
-- `DELETE /api/tokens/:address` : Désactive un token
+- `POST /api/tokens` : Ajouter un nouveau token (démarre l'acquisition)
+- `GET /api/tokens` : Liste tous les tokens actifs
+- `GET /api/tokens/all` : Liste tous les tokens (actifs et inactifs)
+- `GET /api/tokens/:address` : Récupère un token spécifique
+- `PATCH /api/tokens/:address/activate` : Réactive un token (reprend l'acquisition)
+- `PATCH /api/tokens/:address/deactivate` : Désactive un token (arrête l'acquisition)
+- `DELETE /api/tokens/:address` : Supprime définitivement un token (conserve les données InfluxDB)
 
-### OHLCV
+### Données OHLCV
 
 - `GET /api/ohlcv/:address/:timeframe` : Récupère les données OHLCV
 - `GET /api/ohlcv/raw/:address` : Récupère les données brutes (prix + volume)

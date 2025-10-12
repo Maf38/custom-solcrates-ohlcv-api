@@ -25,6 +25,8 @@ services:
     ports:
       - "${PORT}:${PORT}"
       - "9229:9229"  # Port de débogage Node.js
+    volumes:
+      - ./data:/app/data  # Montage du répertoire SQLite
     env_file:
       - .env
     healthcheck:

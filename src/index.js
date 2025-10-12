@@ -8,6 +8,7 @@ const PriceCollector = require('./services/PriceCollector');
 const VolumeCollector = require('./services/VolumeCollector');
 const CandleBuilder = require('./services/CandleBuilder');
 const Token = require('./models/Token');
+const sqliteManager = require('./config/sqlite');
 const logger = require('./config/logger');
 
 const app = express();
@@ -84,6 +85,11 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 // Initialisation des collecteurs
 async function initializeCollectors() {
     try {
+        // Étape 1: Initialiser SQLite
+        logger.info('Initialisation de SQLite...');
+        sqliteManager.initialize();
+        
+        // Étape 2: Récupérer les tokens actifs (nouvelle logique hybride)
         const tokens = await Token.getAllActive();
         logger.info(`Initialisation des collecteurs avec ${tokens.length} tokens actifs`);
         logger.info(`Collecte de volume: ${VOLUME_ENABLED ? 'activée' : 'désactivée'}`);
@@ -127,6 +133,9 @@ process.on('SIGTERM', () => {
         volumeCollector.stop();
     }
     candleBuilder.stop();
+    
+    // Fermer SQLite
+    sqliteManager.close();
     
     server.close(() => {
         process.exit(0);

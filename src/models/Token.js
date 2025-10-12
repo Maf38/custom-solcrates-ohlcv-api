@@ -1,27 +1,21 @@
-const { Point } = require('@influxdata/influxdb-client');
+const sqliteManager = require('../config/sqlite');
 const { queryApi, writeApi } = require('../config/influxdb');
 const logger = require('../config/logger');
+const { Point } = require('@influxdata/influxdb-client');
 
-class Token {
+class TokenFinal {
     static async create(contractAddress, symbol) {
         try {
-            logger.debug('Tentative de création du token:', { contractAddress, symbol });
+            logger.debug('Tentative de création du token dans SQLite:', { contractAddress, symbol });
 
-            const point = new Point('tokens')
-                .tag('contract_address', contractAddress)
-                .tag('symbol', symbol)
-                .stringField('is_active', 'true')
-                .timestamp(new Date());
+            // Créer uniquement dans SQLite (source principale)
+            const success = sqliteManager.createToken(contractAddress, symbol, true);
+            
+            if (!success) {
+                throw new Error('Échec de la création du token dans SQLite');
+            }
 
-            logger.debug('Point InfluxDB créé:', point);
-
-            await writeApi.writePoint(point);
-            logger.debug('Point écrit dans InfluxDB');
-
-            await writeApi.flush();
-            logger.debug('Données InfluxDB flushées');
-
-            // Vérifier immédiatement que le token a été créé
+            // Vérifier la création
             const createdToken = await this.findByAddress(contractAddress);
             logger.debug('Vérification post-création:', createdToken);
 
@@ -29,7 +23,7 @@ class Token {
                 throw new Error('Token non trouvé après création');
             }
 
-            logger.info(`Token créé avec succès: ${symbol} (${contractAddress})`);
+            logger.info(`Token créé avec succès dans SQLite: ${symbol} (${contractAddress})`);
             return createdToken;
         } catch (error) {
             logger.error('Erreur lors de la création du token:', error);
@@ -39,35 +33,22 @@ class Token {
 
     static async findByAddress(contractAddress) {
         try {
-            logger.debug('Recherche du token:', contractAddress);
+            logger.debug('Recherche du token dans SQLite:', contractAddress);
 
-            const query = `
-                from(bucket: "${process.env.INFLUXDB_BUCKET}")
-                |> range(start: -35d)
-                |> filter(fn: (r) => r["_measurement"] == "tokens")
-                |> filter(fn: (r) => r["contract_address"] == "${contractAddress}")
-                |> filter(fn: (r) => r["_field"] == "is_active")
-                |> last()
-            `;
-
-            logger.debug('Requête InfluxDB:', query);
-
-            const result = await queryApi.collectRows(query);
-            logger.debug('Résultat de la requête:', result);
-
-            if (result.length === 0) {
-                logger.debug('Token non trouvé');
+            // Rechercher uniquement dans SQLite (source principale)
+            const token = sqliteManager.getTokenByAddress(contractAddress);
+            
+            if (!token) {
+                logger.debug('Token non trouvé dans SQLite');
                 return null;
             }
 
-            const token = {
-                contract_address: contractAddress,
-                symbol: result[0].symbol,
-                is_active: result[0]._value === 'true'
+            logger.debug('Token trouvé dans SQLite:', token);
+            return {
+                contract_address: token.contract_address,
+                symbol: token.symbol,
+                is_active: Boolean(token.is_active) // Convertir 1/0 en true/false
             };
-
-            logger.debug('Token trouvé:', token);
-            return token;
         } catch (error) {
             logger.error('Erreur lors de la recherche du token:', error);
             throw error;
@@ -76,72 +57,60 @@ class Token {
 
     static async getAllActive() {
         try {
-            logger.debug('Récupération de tous les tokens actifs');
+            logger.debug('Récupération de tous les tokens actifs depuis SQLite');
 
-            // Chercher les tokens qui ont des données OHLCV dans les 3 derniers jours
-            const query = `
-                from(bucket: "${process.env.INFLUXDB_BUCKET}")
-                |> range(start: -3d)
-                |> filter(fn: (r) => r["_measurement"] == "ohlcv")
-                |> filter(fn: (r) => r["_field"] == "close")
-                |> group(columns: ["contract_address", "symbol"])
-                |> first()
-                |> keep(columns: ["contract_address", "symbol"])
-            `;
-
-            logger.debug('Requête InfluxDB:', query);
-
-            const results = await queryApi.collectRows(query);
-            logger.debug('Résultats bruts:', results);
-
-            if (!results || results.length === 0) {
-                logger.warn('Aucun token actif trouvé dans la base de données');
-                return [];
-            }
-
-            const tokens = results.map(row => ({
-                contract_address: row.contract_address,
-                symbol: row.symbol,
-                is_active: true
+            // LOGIQUE SIMPLE : Récupérer tous les tokens actifs depuis SQLite
+            // Pas de filtre temporel, pas de dépendance InfluxDB
+            const activeTokens = sqliteManager.getAllActiveTokens();
+            
+            // Formater pour maintenir la compatibilité avec l'ancienne API
+            const formattedTokens = activeTokens.map(token => ({
+                contract_address: token.contract_address,
+                symbol: token.symbol,
+                is_active: Boolean(token.is_active) // Convertir 1/0 en true/false
             }));
-
-            logger.info(`${tokens.length} tokens actifs trouvés:`, tokens);
-            return tokens;
+            
+            logger.info(`${formattedTokens.length} tokens actifs trouvés dans SQLite`);
+            return formattedTokens;
+            
         } catch (error) {
             logger.error('Erreur lors de la récupération des tokens actifs:', error);
             throw error;
         }
     }
 
+    static async getAllTokens() {
+        try {
+            logger.debug('Récupération de tous les tokens depuis SQLite');
+
+            // Récupérer tous les tokens (actifs et inactifs) depuis SQLite
+            const tokens = sqliteManager.getAllTokens();
+            
+            logger.info(`${tokens.length} tokens trouvés dans SQLite`);
+            
+            return tokens.map(token => ({
+                contract_address: token.contract_address,
+                symbol: token.symbol,
+                is_active: Boolean(token.is_active), // Convertir 1/0 en true/false
+                created_at: token.created_at,
+                updated_at: token.updated_at
+            }));
+        } catch (error) {
+            logger.error('Erreur lors de la récupération des tokens depuis SQLite:', error);
+            throw error;
+        }
+    }
+
     static async update(contractAddress, updates) {
         try {
-            logger.debug('Tentative de mise à jour du token:', { contractAddress, updates });
+            logger.debug('Tentative de mise à jour du token dans SQLite:', { contractAddress, updates });
 
-            // D'abord récupérer le token existant pour avoir le symbol
-            const existingToken = await this.findByAddress(contractAddress);
-            if (!existingToken) {
-                logger.error('Token non trouvé pour la mise à jour:', contractAddress);
-                throw new Error('Token non trouvé');
+            // Mise à jour uniquement dans SQLite (source principale)
+            const success = sqliteManager.updateToken(contractAddress, updates);
+            
+            if (!success) {
+                throw new Error('Token non trouvé pour la mise à jour');
             }
-
-            const point = new Point('tokens')
-                .tag('contract_address', contractAddress)
-                .tag('symbol', existingToken.symbol);
-
-            // Ajouter les champs à mettre à jour
-            if (updates.is_active !== undefined) {
-                point.stringField('is_active', updates.is_active.toString());
-            }
-
-            point.timestamp(new Date());
-
-            logger.debug('Point InfluxDB créé pour la mise à jour:', point);
-
-            await writeApi.writePoint(point);
-            logger.debug('Point écrit dans InfluxDB');
-
-            await writeApi.flush();
-            logger.debug('Données InfluxDB flushées');
 
             // Vérifier la mise à jour
             const updatedToken = await this.findByAddress(contractAddress);
@@ -153,6 +122,34 @@ class Token {
             throw error;
         }
     }
+
+    static async tokenExists(contractAddress) {
+        return sqliteManager.tokenExists(contractAddress);
+    }
+
+    static async getTokenCount() {
+        return sqliteManager.getTokenCount();
+    }
+
+    // Méthode pour supprimer définitivement un token
+    static async delete(contractAddress) {
+        try {
+            logger.debug('Tentative de suppression définitive du token:', contractAddress);
+
+            // Supprimer définitivement de SQLite
+            const success = sqliteManager.deleteToken(contractAddress);
+            
+            if (!success) {
+                throw new Error('Token non trouvé pour la suppression');
+            }
+
+            logger.info(`Token supprimé définitivement: ${contractAddress}`);
+            return true;
+        } catch (error) {
+            logger.error('Erreur lors de la suppression du token:', error);
+            throw error;
+        }
+    }
 }
 
-module.exports = Token;
+module.exports = TokenFinal;

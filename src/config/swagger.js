@@ -130,16 +130,23 @@ const swaggerDefinition = {
     paths: {
         '/api/tokens': {
             get: {
-                summary: 'Liste tous les tokens suivis',
+                summary: 'Liste tous les tokens actifs',
+                description: 'Récupère la liste des tokens actuellement suivis pour l\'acquisition de données',
                 responses: {
                     '200': {
-                        description: 'Liste des tokens',
+                        description: 'Liste des tokens actifs',
                         content: {
                             'application/json': {
                                 schema: {
-                                    type: 'array',
-                                    items: {
-                                        $ref: '#/components/schemas/Token'
+                                    type: 'object',
+                                    properties: {
+                                        status: { type: 'string' },
+                                        data: {
+                                            type: 'array',
+                                            items: {
+                                                $ref: '#/components/schemas/Token'
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -149,6 +156,7 @@ const swaggerDefinition = {
             },
             post: {
                 summary: 'Ajoute un nouveau token à suivre',
+                description: 'Ajoute un token dans SQLite et démarre automatiquement l\'acquisition des données',
                 requestBody: {
                     required: true,
                     content: {
@@ -206,9 +214,111 @@ const swaggerDefinition = {
                 }
             }
         },
+        '/api/tokens/all': {
+            get: {
+                summary: 'Liste tous les tokens (actifs et inactifs)',
+                description: 'Récupère la liste complète des tokens dans SQLite',
+                responses: {
+                    '200': {
+                        description: 'Liste complète des tokens',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        status: { type: 'string' },
+                                        data: {
+                                            type: 'array',
+                                            items: {
+                                                $ref: '#/components/schemas/Token'
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         '/api/tokens/{address}': {
+            get: {
+                summary: 'Récupère un token spécifique',
+                parameters: [
+                    {
+                        in: 'path',
+                        name: 'address',
+                        required: true,
+                        schema: {
+                            type: 'string'
+                        },
+                        description: 'Adresse du contrat Solana'
+                    }
+                ],
+                responses: {
+                    '200': {
+                        description: 'Token trouvé',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        status: { type: 'string' },
+                                        data: {
+                                            $ref: '#/components/schemas/Token'
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    '404': {
+                        description: 'Token non trouvé'
+                    }
+                }
+            },
             delete: {
-                summary: 'Désactive le suivi d\'un token',
+                summary: 'Supprime définitivement un token',
+                description: 'Supprime le token de SQLite (les données InfluxDB sont conservées)',
+                parameters: [
+                    {
+                        in: 'path',
+                        name: 'address',
+                        required: true,
+                        schema: {
+                            type: 'string'
+                        },
+                        description: 'Adresse du contrat Solana'
+                    }
+                ],
+                responses: {
+                    '200': {
+                        description: 'Token supprimé définitivement',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        status: { type: 'string' },
+                                        message: { type: 'string' },
+                                        data: {
+                                            $ref: '#/components/schemas/Token'
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    '404': {
+                        description: 'Token non trouvé'
+                    }
+                }
+            }
+        },
+        '/api/tokens/{address}/deactivate': {
+            patch: {
+                summary: 'Désactive un token',
+                description: 'Désactive le token dans SQLite (arrête l\'acquisition des données)',
                 parameters: [
                     {
                         in: 'path',
@@ -228,14 +338,8 @@ const swaggerDefinition = {
                                 schema: {
                                     type: 'object',
                                     properties: {
-                                        status: {
-                                            type: 'string',
-                                            example: 'success'
-                                        },
-                                        message: {
-                                            type: 'string',
-                                            example: 'Token désactivé avec succès'
-                                        },
+                                        status: { type: 'string' },
+                                        message: { type: 'string' },
                                         data: {
                                             $ref: '#/components/schemas/Token'
                                         }
@@ -246,9 +350,45 @@ const swaggerDefinition = {
                     },
                     '404': {
                         description: 'Token non trouvé'
+                    }
+                }
+            }
+        },
+        '/api/tokens/{address}/activate': {
+            patch: {
+                summary: 'Réactive un token',
+                description: 'Réactive le token dans SQLite (reprend l\'acquisition des données)',
+                parameters: [
+                    {
+                        in: 'path',
+                        name: 'address',
+                        required: true,
+                        schema: {
+                            type: 'string'
+                        },
+                        description: 'Adresse du contrat Solana'
+                    }
+                ],
+                responses: {
+                    '200': {
+                        description: 'Token réactivé avec succès',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        status: { type: 'string' },
+                                        message: { type: 'string' },
+                                        data: {
+                                            $ref: '#/components/schemas/Token'
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     },
-                    '500': {
-                        description: 'Erreur serveur'
+                    '404': {
+                        description: 'Token non trouvé'
                     }
                 }
             }

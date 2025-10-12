@@ -13,6 +13,9 @@ yarn-error.log
 *.swp
 *.swo
 
+#base SQLITE
+tokens.db
+
 # OS
 .DS_Store
 Thumbs.db

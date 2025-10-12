@@ -1,13 +1,14 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
-# Installation des dépendances système nécessaires
+# Installation des dépendances système nécessaires pour better-sqlite3
 RUN apk add --no-cache \
     python3 \
+    py3-setuptools \
     make \
     g++ \
     wget \
     curl \
-    vim  # Pour l'édition en ligne de commande
+    vim
 
 # Création du répertoire de l'application
 WORKDIR /app
