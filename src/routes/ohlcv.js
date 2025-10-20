@@ -178,25 +178,16 @@ router.get('/:address/:timeframe', [
         const { address, timeframe } = req.params;
         const requestedLimit = req.query.limit || 200;
         
-        // Limiter à 200 bougies maximum pour ne pas faire ramer le système
-        const effectiveLimit = Math.min(requestedLimit, 200);
+        // Limiter à 1000 bougies maximum pour ne pas faire ramer le système
+        const effectiveLimit = Math.min(requestedLimit, 1000);
         
-        // Calculer le range temporel pour obtenir environ effectiveLimit bougies
+        // Utiliser un range large par défaut pour récupérer toutes les données historiques
         let start;
         if (req.query.start) {
             start = `"${req.query.start}"`;
         } else {
-            const timeframeMinutes = getTimeframeMinutes(timeframe);
-            const totalMinutes = timeframeMinutes * effectiveLimit;
-            
-            // Convertir en format approprié pour InfluxDB
-            if (totalMinutes < 60) {
-                start = `-${totalMinutes}m`;
-            } else if (totalMinutes < 1440) {
-                start = `-${Math.ceil(totalMinutes / 60)}h`;
-            } else {
-                start = `-${Math.ceil(totalMinutes / 1440)}d`;
-            }
+            // Range par défaut : 30 jours (suffisant pour avoir toutes les bougies historiques)
+            start = `-30d`;
         }
         
         const end = req.query.end ? `, stop: "${req.query.end}"` : '';
