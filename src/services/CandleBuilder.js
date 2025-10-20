@@ -65,10 +65,21 @@ class CandleBuilder {
         }
     }
 
-    async getPreviousCandles(token, timeframe, endTime, count = 14) {
+    async getPreviousCandles(token, timeframe, endTime) {
         try {
+            // Pour calculer correctement le RSI avec la méthode de Wilder, on a besoin de :
+            // - Au moins 15 bougies (14 variations) pour calculer le RSI initial avec SMA
+            // - Plus de bougies pour appliquer le lissage de Wilder
+            // On récupère donc un historique plus large pour permettre le lissage
             const minutes = this.getTimeframeMinutes(timeframe);
-            const startTime = new Date(endTime.getTime() - (minutes * 60 * 1000 * count));
+
+            // Récupération de 30 périodes pour permettre le lissage de Wilder
+            // (14 pour la SMA initiale + 16 pour le lissage progressif)
+            const periodsToFetch = 30;
+            const periodsInMinutes = periodsToFetch * minutes;
+            const startTime = new Date(endTime.getTime() - (periodsInMinutes * 60 * 1000));
+
+            logger.debug(`Recherche des bougies ${timeframe} pour ${token.symbol} entre ${startTime.toISOString()} et ${endTime.toISOString()} (${periodsToFetch} périodes = ${periodsInMinutes} minutes)`);
 
             const query = `
                 from(bucket: "${process.env.INFLUXDB_BUCKET}")
@@ -81,7 +92,7 @@ class CandleBuilder {
             `;
 
             const candles = await queryApi.collectRows(query);
-            logger.debug(`${candles.length} bougies précédentes trouvées pour ${token.symbol} (${timeframe})`);
+            logger.debug(`${candles.length} bougies précédentes trouvées pour ${token.symbol} (${timeframe}) dans la plage de ${periodsToFetch} périodes`);
             return candles;
         } catch (error) {
             logger.error(`Erreur lors de la récupération des bougies précédentes pour ${token.symbol}:`, error);
@@ -111,8 +122,8 @@ class CandleBuilder {
     }
 
     calculateRSI(candles) {
-        if (candles.length < 14) {
-            logger.debug(`Pas assez de bougies pour calculer le RSI (${candles.length}/14)`);
+        if (candles.length < 2) {
+            logger.debug(`Pas assez de bougies pour calculer le RSI (${candles.length}/2 minimum)`);
             return { rsi: null, rsi_quality: 0 };
         }
 
@@ -151,17 +162,29 @@ class CandleBuilder {
         }
 
         // Méthode Wilder originale pour le RSI
-        
-        // 1. Calcul de la moyenne simple (SMA) pour les 14 premières périodes
-        let avgGain = changes.slice(0, 14).reduce((sum, c) => sum + c.gain, 0) / 14;
-        let avgLoss = changes.slice(0, 14).reduce((sum, c) => sum + c.loss, 0) / 14;
 
-        // 2. Application de la méthode de lissage de Wilder pour les périodes suivantes
-        // Utilise un facteur de lissage de 1/14 (méthode Wilder)
-        // La formule est : avgU = ((avgU * 13) + U1) / 14
-        for (let i = 14; i < changes.length; i++) {
-            avgGain = ((avgGain * 13) + changes[i].gain) / 14;
-            avgLoss = ((avgLoss * 13) + changes[i].loss) / 14;
+        // 1. Calcul de la SMA initiale sur les 13 premières variations (pour obtenir l'avg à la période 14)
+        // Wilder calcule la SMA sur n-1 périodes, puis applique le lissage sur la nième
+        const periodsToUse = Math.min(14, changes.length);
+
+        let avgGain, avgLoss;
+
+        if (changes.length < 14) {
+            // Cas où on a moins de 14 variations : on fait une SMA simple sur ce qu'on a
+            avgGain = changes.reduce((sum, c) => sum + c.gain, 0) / changes.length;
+            avgLoss = changes.reduce((sum, c) => sum + c.loss, 0) / changes.length;
+        } else {
+            // Cas normal (>= 14 variations) : méthode Wilder complète
+            // Étape 1 : SMA sur les 14 premières variations
+            avgGain = changes.slice(0, 14).reduce((sum, c) => sum + c.gain, 0) / 14;
+            avgLoss = changes.slice(0, 14).reduce((sum, c) => sum + c.loss, 0) / 14;
+
+            // Étape 2 : Application du lissage de Wilder pour les variations suivantes
+            // Formule : avgGain = ((avgGain * 13) + gain_actuel) / 14
+            for (let i = 14; i < changes.length; i++) {
+                avgGain = ((avgGain * 13) + changes[i].gain) / 14;
+                avgLoss = ((avgLoss * 13) + changes[i].loss) / 14;
+            }
         }
 
         // 3. Calcul du RSI selon Wilder
@@ -180,11 +203,14 @@ class CandleBuilder {
 
         // Calcul de la qualité du RSI
         // - Prend en compte les gaps (bougies manquantes)
+        // - Ajuste selon le nombre de bougies disponibles vs idéal (30 bougies précédentes + 1 actuelle = 31)
         // - Donne plus de poids aux bougies récentes
         // - Basé sur la qualité des bougies individuelles
-        const gapPenalty = Math.max(0, 1 - (gapCount / 14)); // 1 = pas de gaps, 0 = que des gaps
+        // Note: Pour un RSI14 avec lissage de Wilder complet, il faut 31 bougies (30 variations)
+        const candleCountFactor = Math.min(1, candles.length / 31); // Facteur de réduction si moins de 31 bougies
+        const gapPenalty = Math.max(0, 1 - (gapCount / 30)); // 1 = pas de gaps, 0 = que des gaps (sur 30 variations max)
         const weightedAverageQuality = weightedQuality / totalWeight;
-        const rsi_quality = gapPenalty * weightedAverageQuality;
+        const rsi_quality = candleCountFactor * gapPenalty * weightedAverageQuality;
 
         logger.debug(`RSI qualité: ${(rsi_quality * 100).toFixed(1)}% (${gapCount} gaps, qualité moyenne pondérée: ${(weightedAverageQuality * 100).toFixed(1)}%)`);
 
