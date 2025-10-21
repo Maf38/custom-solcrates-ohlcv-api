@@ -3,6 +3,7 @@ version: '3.8'
 services:
   influxdb:
     image: influxdb:2.7
+    container_name: ohlcv-influxdb
     ports:
       - "8086:8086"
     volumes:
@@ -22,9 +23,11 @@ services:
       interval: 10s
       timeout: 3s
       retries: 3
+    restart: unless-stopped
 
   ohlcv-api:
     build: .
+    container_name: ohlcv-api
     ports:
       - "${PORT}:${PORT}"
       - "9229:9229"  # Port de débogage Node.js
@@ -44,6 +47,7 @@ services:
     depends_on:
       influxdb:
         condition: service_healthy
+    restart: unless-stopped
 
   backup:
     build:

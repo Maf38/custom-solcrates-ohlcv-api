@@ -8,7 +8,13 @@ class CandleBuilder {
         this.isRunning = false;
         this.builderInterval = null;
         this.includeVolume = options.includeVolume || false;
+        this.tokens = [];
         logger.info(`CandleBuilder initialisé avec volume ${this.includeVolume ? 'activé' : 'désactivé'}`);
+    }
+
+    setTokens(tokens) {
+        this.tokens = tokens;
+        logger.info(`CandleBuilder: Liste des tokens mise à jour: ${tokens.map(t => `${t.symbol} (${t.contract_address})`).join(', ')}`);
     }
 
     getTimeframeMinutes(timeframe) {
@@ -326,13 +332,14 @@ class CandleBuilder {
         }
     }
 
-    async checkAndBuildCandles(tokens) {
+    async checkAndBuildCandles() {
         try {
-            if (!tokens || tokens.length === 0) {
+            // Utiliser this.tokens au lieu du paramètre
+            if (!this.tokens || this.tokens.length === 0) {
                 logger.warn('checkAndBuildCandles appelé sans tokens');
                 return;
             }
-            logger.debug(`checkAndBuildCandles appelé avec ${tokens.length} tokens: ${tokens.map(t => t.symbol).join(', ')}`);
+            logger.debug(`checkAndBuildCandles appelé avec ${this.tokens.length} tokens: ${this.tokens.map(t => t.symbol).join(', ')}`);
 
             const now = new Date();
             now.setSeconds(0, 0);  // Aligner sur la minute
@@ -340,12 +347,12 @@ class CandleBuilder {
 
             for (const timeframe of this.timeframes) {
                 logger.debug(`Vérification du timeframe ${timeframe}`);
-                
+
                 if (this.shouldBuildCandle(now, timeframe)) {
                     logger.info(`\n=== Construction des bougies ${timeframe} ===`);
                     logger.debug(`Conditions remplies pour construire des bougies ${timeframe}`);
-                    
-                    for (const token of tokens) {
+
+                    for (const token of this.tokens) {
                         try {
                             logger.debug(`Tentative de construction de bougie ${timeframe} pour ${token.symbol}`);
                             await this.buildCandle(token, timeframe, now);
@@ -375,23 +382,26 @@ class CandleBuilder {
                 return;
             }
 
+            // Stocker les tokens dans l'instance
+            this.setTokens(tokens);
+
             this.isRunning = true;
             logger.info('\nDémarrage du CandleBuilder');
             logger.info(`Intervalle de mise à jour: ${this.updateInterval}ms`);
             logger.info(`Timeframes: ${this.timeframes.join(', ')}`);
-            logger.info(`Tokens suivis: ${tokens.map(t => t.symbol).join(', ')}`);
+            logger.info(`Tokens suivis: ${this.tokens.map(t => t.symbol).join(', ')}`);
             logger.info(`Volume: ${this.includeVolume ? 'activé' : 'désactivé'}`);
             logger.info('='.repeat(50));
 
             // Première construction
             logger.debug('Lancement de la première construction de bougies...');
-            await this.checkAndBuildCandles(tokens);
+            await this.checkAndBuildCandles();
 
             // Construction périodique
             logger.debug('Configuration de la construction périodique...');
             this.builderInterval = setInterval(async () => {
                 try {
-                    await this.checkAndBuildCandles(tokens);
+                    await this.checkAndBuildCandles();
                 } catch (error) {
                     logger.error('Erreur dans l\'intervalle de construction:', error);
                 }

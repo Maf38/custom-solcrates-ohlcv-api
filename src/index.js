@@ -23,7 +23,7 @@ const volumeCollector = VOLUME_ENABLED ? new VolumeCollector() : null;
 const candleBuilder = new CandleBuilder({ includeVolume: VOLUME_ENABLED });
 
 // Passer les collecteurs au routeur des tokens
-tokensRouter.setCollectors(priceCollector, volumeCollector);
+tokensRouter.setCollectors(priceCollector, volumeCollector, candleBuilder);
 
 // Middleware pour parser le JSON
 app.use(express.json());

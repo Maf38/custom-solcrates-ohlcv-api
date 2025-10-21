@@ -9,11 +9,13 @@ const router = express.Router();
 // Stockage des collecteurs
 let priceCollector = null;
 let volumeCollector = null;
+let candleBuilder = null;
 
 // Initialisation des collecteurs
-router.setCollectors = (price, volume) => {
+router.setCollectors = (price, volume, candle) => {
     priceCollector = price;
     volumeCollector = volume;
+    candleBuilder = candle;
 };
 
 // Validation personnalisée pour l'adresse Solana
@@ -155,6 +157,9 @@ router.post('/',
             if (volumeCollector && process.env.VOLUME_ENABLED === 'true') {
                 volumeCollector.setTokens(activeTokens);
             }
+            if (candleBuilder) {
+                candleBuilder.setTokens(activeTokens);
+            }
 
             logger.info('POST /tokens - Token créé avec succès:', newToken);
             res.status(201).json({
@@ -208,6 +213,9 @@ router.patch('/:address/deactivate', async (req, res) => {
         if (volumeCollector && process.env.VOLUME_ENABLED === 'true') {
             volumeCollector.setTokens(activeTokens);
         }
+        if (candleBuilder) {
+            candleBuilder.setTokens(activeTokens);
+        }
 
         logger.info('PATCH /tokens/:address/deactivate - Token désactivé:', result);
         res.json({
@@ -258,6 +266,9 @@ router.patch('/:address/activate', async (req, res) => {
         }
         if (volumeCollector && process.env.VOLUME_ENABLED === 'true') {
             volumeCollector.setTokens(activeTokens);
+        }
+        if (candleBuilder) {
+            candleBuilder.setTokens(activeTokens);
         }
 
         logger.info('PATCH /tokens/:address/activate - Token réactivé:', result);
@@ -316,6 +327,9 @@ router.delete('/:address', async (req, res) => {
         }
         if (volumeCollector && process.env.VOLUME_ENABLED === 'true') {
             volumeCollector.setTokens(activeTokens);
+        }
+        if (candleBuilder) {
+            candleBuilder.setTokens(activeTokens);
         }
 
         logger.info('DELETE /tokens/:address - Token supprimé définitivement:', existingToken);
