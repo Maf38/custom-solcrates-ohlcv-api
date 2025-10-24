@@ -166,16 +166,142 @@ Le `rsi_quality` reflète la fiabilité du calcul RSI :
 3. **Construction des bougies** → Calcul OHLCV + RSI → InfluxDB
 4. **API** → SQLite pour la liste des tokens, InfluxDB pour les données
 
+## 🆕 Système d'Initialisation Historique
+
+### Vue d'ensemble
+
+Lorsqu'un nouveau token est ajouté, le système initialise **automatiquement** 30 jours de données historiques via l'API GeckoTerminal avant de démarrer la collecte en temps réel.
+
+### Flux d'initialisation
+
+```
+1. POST /api/tokens (nouveau token)
+   ↓
+2. Status: 'pending' → Token créé mais pas encore actif
+   ↓
+3. HistoricalDataInitializer démarre
+   - Recherche du pool principal sur GeckoTerminal
+   - Téléchargement de 30 jours de bougies 1m (~43,200 bougies)
+   - Respect du rate limit (30 req/min = 1 req/2s)
+   ↓
+4. Traitement des données historiques
+   - Conversion des bougies en raw_prices (prix de clôture)
+   - Agrégation pour tous les timeframes (1m, 5m, 15m, 1h, 4h, 1d)
+   - Calcul du RSI et EMA pour chaque bougie
+   ↓
+5. Status: 'completed' → Token activé automatiquement
+   ↓
+6. Collecte en temps réel démarre
+```
+
+### Architecture des données historiques
+
+#### Étape 1 : Récupération depuis GeckoTerminal
+- **Format reçu** : Bougies 1 minute `[timestamp, open, high, low, close, volume]`
+- **Quantité** : ~43,200 bougies pour 30 jours
+- **Rate limit** : 30 requêtes/minute (2 secondes entre chaque requête)
+- **Durée** : ~2-3 minutes pour récupérer tout l'historique
+
+#### Étape 2 : Conversion en raw_prices
+Pour chaque bougie 1m reçue :
+```javascript
+await writeRawPrice({
+    token_address: "...",
+    symbol: "...",
+    price: close,  // Prix de clôture de la bougie
+    timestamp: new Date(timestamp * 1000)
+});
+```
+
+**Pourquoi ?** Maintenir la cohérence avec le système de collecte en temps réel qui utilise des raw_prices comme base.
+
+#### Étape 3 : Construction des bougies OHLCV
+Les bougies 1 minute sont agrégées pour créer tous les timeframes :
+
+| Timeframe | Agrégation | Bougies créées (30j) |
+|-----------|------------|---------------------|
+| 1m | Directe | ~43,200 |
+| 5m | 5 bougies 1m | ~8,640 |
+| 15m | 15 bougies 1m | ~2,880 |
+| 1h | 60 bougies 1m | ~720 |
+| 4h | 240 bougies 1m | ~180 |
+| 1d | 1,440 bougies 1m | ~30 |
+
+Pour chaque bougie agrégée :
+- **OHLC** : Open (première), High (max), Low (min), Close (dernière)
+- **Volume** : Somme des volumes
+- **RSI** : Calculé avec l'historique précédent (méthode de Wilder)
+- **EMA** : Calculé avec l'historique précédent
+- **Quality Factor** : 1.0 (données historiques = qualité maximale)
+
+### États d'initialisation
+
+| Status | Description |
+|--------|-------------|
+| `pending` | En attente de traitement |
+| `in_progress` | Initialisation en cours |
+| `completed` | Terminé avec succès, token actif |
+| `failed` | Échec (erreur stockée) |
+| `skipped` | Pas d'initialisation nécessaire (tokens existants) |
+
+### Schéma de la table tokens
+
+```sql
+CREATE TABLE tokens (
+    -- Colonnes de base
+    contract_address TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT true,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+    -- Colonnes d'initialisation historique
+    initialization_status TEXT DEFAULT 'pending',
+    initialization_started_at INTEGER,
+    initialization_completed_at INTEGER,
+    initialization_progress INTEGER DEFAULT 0,
+    initialization_error TEXT,
+    main_pool_id TEXT,
+    historical_data_start_date INTEGER,
+    historical_data_end_date INTEGER
+);
+```
+
+### Configuration
+
+Dans `src/services/HistoricalDataInitializer.js` :
+
+```javascript
+config = {
+    HISTORICAL_DAYS: 30,              // Jours d'historique à récupérer
+    REQUEST_DELAY_MS: 2000,           // Délai entre requêtes (rate limit)
+    QUEUE_CHECK_INTERVAL_MS: 10000,   // Vérification de la queue
+    MAX_RETRIES: 3,                   // Tentatives en cas d'échec
+    RETRY_DELAY_MINUTES: 5            // Délai avant retry
+};
+```
+
+### Gestion des erreurs
+
+| Erreur | Action |
+|--------|--------|
+| 429 Too Many Requests | Attente de 60s puis retry automatique |
+| 404 Pool Not Found | Status 'failed', pas de retry |
+| Network timeout | Retry après 5 minutes (max 3 fois) |
+| InfluxDB error | Retry après 1 minute |
+
 ## API Routes
 
 Documentation complète disponible via Swagger UI : http://localhost:3002/api-docs
 
 ### Gestion des tokens
 
-- `POST /api/tokens` : Ajouter un nouveau token (démarre l'acquisition)
-- `GET /api/tokens` : Liste tous les tokens actifs
+- `POST /api/tokens` : Ajouter un nouveau token (démarre l'initialisation historique puis l'acquisition)
+- `GET /api/tokens` : Liste tous les tokens actifs (uniquement ceux avec status 'completed' ou 'skipped')
 - `GET /api/tokens/all` : Liste tous les tokens (actifs et inactifs)
 - `GET /api/tokens/:address` : Récupère un token spécifique
+- `GET /api/tokens/:address/initialization-status` : Récupère le statut d'initialisation d'un token
+- `GET /api/tokens/initialization-stats` : Récupère les statistiques globales d'initialisation
 - `PATCH /api/tokens/:address/activate` : Réactive un token (reprend l'acquisition)
 - `PATCH /api/tokens/:address/deactivate` : Désactive un token (arrête l'acquisition)
 - `DELETE /api/tokens/:address` : Supprime définitivement un token (conserve les données InfluxDB)
@@ -184,6 +310,80 @@ Documentation complète disponible via Swagger UI : http://localhost:3002/api-do
 
 - `GET /api/ohlcv/:address/:timeframe` : Récupère les données OHLCV
 - `GET /api/ohlcv/raw/:address` : Récupère les données brutes (prix + volume)
+
+### Exemples d'utilisation
+
+#### Ajouter un token et suivre l'initialisation
+
+```bash
+# 1. Ajouter le token
+curl -X POST http://localhost:3002/api/tokens \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contract_address": "AnR1qNfefHwL8GY7C4iqzBjJZyKzw6Z7N9kXY81bpump",
+    "symbol": "BROWNHOUSE"
+  }'
+
+# 2. Vérifier le statut d'initialisation
+curl http://localhost:3002/api/tokens/AnR1qNfefHwL8GY7C4iqzBjJZyKzw6Z7N9kXY81bpump/initialization-status
+
+# Réponse :
+{
+  "status": "success",
+  "data": {
+    "initialization_status": "in_progress",
+    "initialization_progress": 45,
+    "initialization_started_at": 1729740000000,
+    "initialization_completed_at": null,
+    "initialization_error": null,
+    "historical_data_start_date": null,
+    "historical_data_end_date": null,
+    "main_pool_id": "abc123..."
+  }
+}
+
+# 3. Voir les statistiques globales
+curl http://localhost:3002/api/tokens/initialization-stats
+
+# Réponse :
+{
+  "status": "success",
+  "data": {
+    "stats": [
+      { "initialization_status": "pending", "count": 2 },
+      { "initialization_status": "in_progress", "count": 1 },
+      { "initialization_status": "completed", "count": 15 },
+      { "initialization_status": "failed", "count": 1 }
+    ]
+  }
+}
+```
+
+#### Surveiller les logs
+
+```bash
+# Logs de l'initialisation historique
+docker logs ohlcv-api -f | grep -i "initialisation\|historical"
+
+# Exemple de logs :
+# 🚀 Début initialisation historique: BROWNHOUSE (AnR1q...)
+# Recherche du pool principal pour BROWNHOUSE...
+# ✅ Pool trouvé: abc123...
+# Récupération de 30 jours d'historique...
+# 📊 Progression BROWNHOUSE: 10/44 requêtes (22%)
+# 📊 Progression BROWNHOUSE: 20/44 requêtes (45%)
+# ✅ 43200 candles récupérées pour BROWNHOUSE
+# Stockage de 43200 candles dans InfluxDB...
+# ✅ 43200 raw prices stockées
+# Construction des bougies 1m pour BROWNHOUSE...
+# ✅ 43200 bougies 1m créées
+# Construction des bougies 5m pour BROWNHOUSE...
+# ✅ 8640 bougies 5m créées
+# ...
+# ✅ Initialisation terminée avec succès: BROWNHOUSE
+# ✅ Token BROWNHOUSE activé
+# Mise à jour des collecteurs avec 16 tokens actifs
+```
 
 ## Service de Backup Automatique
 
@@ -197,8 +397,18 @@ Le service de backup automatique sauvegarde quotidiennement vos données :
 
 ### 📊 **Données sauvegardées**
 
-1. **InfluxDB** : Toutes les données temporelles (prix, volumes, bougies OHLCV, RSI)
-2. **SQLite** : Configuration des tokens et leur statut actif/inactif
+1. **InfluxDB** : Toutes les données temporelles
+   - Raw prices (prix bruts collectés)
+   - Raw volumes (si activé)
+   - Bougies OHLCV (tous timeframes : 1m, 5m, 15m, 1h, 4h, 1d)
+   - RSI et EMA calculés
+   - Données historiques initialisées (30 jours par token)
+
+2. **SQLite** : Configuration des tokens
+   - Informations de base (adresse, symbole, statut actif/inactif)
+   - État d'initialisation historique (status, progression, dates)
+   - Pool IDs GeckoTerminal
+   - Métadonnées de traçabilité
 
 ### 🚀 **Démarrage du service**
 

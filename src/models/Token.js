@@ -138,7 +138,7 @@ class TokenFinal {
 
             // Supprimer définitivement de SQLite
             const success = sqliteManager.deleteToken(contractAddress);
-            
+
             if (!success) {
                 throw new Error('Token non trouvé pour la suppression');
             }
@@ -149,6 +149,19 @@ class TokenFinal {
             logger.error('Erreur lors de la suppression du token:', error);
             throw error;
         }
+    }
+
+    // Méthodes pour l'initialisation historique
+    static getNextPendingInitialization() {
+        return sqliteManager.getNextPendingInitialization();
+    }
+
+    static updateInitializationStatus(contractAddress, updates) {
+        return sqliteManager.updateInitializationStatus(contractAddress, updates);
+    }
+
+    static getInitializationStats() {
+        return sqliteManager.getInitializationStats();
     }
 }
 

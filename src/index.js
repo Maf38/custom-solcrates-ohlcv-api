@@ -7,6 +7,7 @@ const ohlcvRouter = require('./routes/ohlcv');
 const PriceCollector = require('./services/PriceCollector');
 const VolumeCollector = require('./services/VolumeCollector');
 const CandleBuilder = require('./services/CandleBuilder');
+const HistoricalDataInitializer = require('./services/HistoricalDataInitializer');
 const Token = require('./models/Token');
 const sqliteManager = require('./config/sqlite');
 const logger = require('./config/logger');
@@ -21,9 +22,11 @@ const VOLUME_ENABLED = process.env.VOLUME_ENABLED === 'true';
 const priceCollector = new PriceCollector();
 const volumeCollector = VOLUME_ENABLED ? new VolumeCollector() : null;
 const candleBuilder = new CandleBuilder({ includeVolume: VOLUME_ENABLED });
+const historicalInitializer = new HistoricalDataInitializer();
 
-// Passer les collecteurs au routeur des tokens
+// Passer les collecteurs au routeur des tokens et à l'initialisateur historique
 tokensRouter.setCollectors(priceCollector, volumeCollector, candleBuilder);
+historicalInitializer.setCollectors(priceCollector, volumeCollector, candleBuilder);
 
 // Middleware pour parser le JSON
 app.use(express.json());
@@ -88,25 +91,29 @@ async function initializeCollectors() {
         // Étape 1: Initialiser SQLite
         logger.info('Initialisation de SQLite...');
         sqliteManager.initialize();
-        
-        // Étape 2: Récupérer les tokens actifs (nouvelle logique hybride)
+
+        // Étape 2: Démarrer l'initialisateur historique
+        logger.info('Démarrage du HistoricalDataInitializer...');
+        historicalInitializer.start();
+
+        // Étape 3: Récupérer les tokens actifs (uniquement ceux complétés)
         const tokens = await Token.getAllActive();
         logger.info(`Initialisation des collecteurs avec ${tokens.length} tokens actifs`);
         logger.info(`Collecte de volume: ${VOLUME_ENABLED ? 'activée' : 'désactivée'}`);
-        
+
         // Initialiser le collecteur de prix
         priceCollector.setTokens(tokens);
         await priceCollector.start();
-        
+
         // Initialiser le collecteur de volume si activé
         if (volumeCollector) {
             volumeCollector.setTokens(tokens);
             await volumeCollector.start();
         }
-        
+
         // Initialiser le constructeur de bougies
         await candleBuilder.start(tokens);
-        
+
         logger.info('Collecteurs initialisés avec succès');
     } catch (error) {
         logger.error('Erreur lors de l\'initialisation des collecteurs:', error);
@@ -126,17 +133,18 @@ const server = app.listen(PORT, async () => {
 // Gestion de l'arrêt propre
 process.on('SIGTERM', () => {
     logger.info('Signal SIGTERM reçu. Arrêt propre...');
-    
+
     // Arrêter les collecteurs
     priceCollector.stop();
     if (volumeCollector) {
         volumeCollector.stop();
     }
     candleBuilder.stop();
-    
+    historicalInitializer.stop();
+
     // Fermer SQLite
     sqliteManager.close();
-    
+
     server.close(() => {
         process.exit(0);
     });
