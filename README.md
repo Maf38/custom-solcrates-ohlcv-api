@@ -397,8 +397,18 @@ Le service de backup automatique sauvegarde quotidiennement vos données :
 
 ### 📊 **Données sauvegardées**
 
-1. **InfluxDB** : Toutes les données temporelles (prix, volumes, bougies OHLCV, RSI)
-2. **SQLite** : Configuration des tokens et leur statut actif/inactif
+1. **InfluxDB** : Toutes les données temporelles
+   - Raw prices (prix bruts collectés)
+   - Raw volumes (si activé)
+   - Bougies OHLCV (tous timeframes : 1m, 5m, 15m, 1h, 4h, 1d)
+   - RSI et EMA calculés
+   - Données historiques initialisées (30 jours par token)
+
+2. **SQLite** : Configuration des tokens
+   - Informations de base (adresse, symbole, statut actif/inactif)
+   - État d'initialisation historique (status, progression, dates)
+   - Pool IDs GeckoTerminal
+   - Métadonnées de traçabilité
 
 ### 🚀 **Démarrage du service**
 
