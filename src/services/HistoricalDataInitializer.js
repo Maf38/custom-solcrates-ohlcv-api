@@ -110,7 +110,12 @@ class HistoricalDataInitializer {
                 onProgress
             );
 
-            logger.info(`✅ ${candles.length} candles récupérées pour ${token.symbol}`);
+            const daysRetrieved = (candles.length / 60 / 24).toFixed(1);
+            logger.info(`✅ ${candles.length} candles récupérées pour ${token.symbol} (~${daysRetrieved} jours)`);
+
+            if (candles.length < this.config.HISTORICAL_DAYS * 24 * 60) {
+                logger.warn(`⚠️ Données partielles pour ${token.symbol}: ${daysRetrieved} jours sur ${this.config.HISTORICAL_DAYS} demandés (token récent ou données limitées)`);
+            }
 
             // 4. Stocker dans InfluxDB et construire les bougies
             await this.storeHistoricalData(token, candles);
