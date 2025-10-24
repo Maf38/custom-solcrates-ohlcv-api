@@ -68,17 +68,22 @@ class GeckoTerminalClient {
         logger.info(`Récupération de ${daysBack} jours d'historique pour le pool ${poolId}...`);
 
         const allCandles = [];
-        let beforeTimestamp = Math.floor(Date.now() / 1000);
-        const targetTimestamp = beforeTimestamp - (daysBack * 24 * 60 * 60);
+        const nowTimestamp = Math.floor(Date.now() / 1000);
+
+        // On démarre la récupération depuis maintenant (les données les plus récentes disponibles)
+        let beforeTimestamp = nowTimestamp;
+        const targetTimestamp = nowTimestamp - (daysBack * 24 * 60 * 60);
 
         const minutesNeeded = daysBack * 24 * 60;
         const requestsNeeded = Math.ceil(minutesNeeded / 1000);
         let requestCount = 0;
 
+        logger.info(`Période cible: ${new Date(targetTimestamp * 1000).toISOString()} → ${new Date(nowTimestamp * 1000).toISOString()}`);
+
         while (beforeTimestamp > targetTimestamp && requestCount < requestsNeeded) {
             const url = `${this.baseUrl}/networks/solana/pools/${poolId}/ohlcv/minute?aggregate=1&before_timestamp=${beforeTimestamp}&limit=1000`;
 
-            logger.debug(`Requête ${requestCount + 1}/${requestsNeeded}: before_timestamp=${beforeTimestamp}`);
+            logger.debug(`Requête ${requestCount + 1}/${requestsNeeded}: before_timestamp=${new Date(beforeTimestamp * 1000).toISOString()}`);
 
             const data = await this.rateLimitedRequest(url);
             const candles = data.data.attributes.ohlcv_list;
@@ -100,9 +105,32 @@ class GeckoTerminalClient {
             logger.debug(`${candles.length} candles récupérées, total: ${allCandles.length}`);
         }
 
-        logger.info(`Récupération terminée: ${allCandles.length} candles sur ${(allCandles.length / 60 / 24).toFixed(1)} jours`);
+        // Trier les candles du plus ancien au plus récent
+        const sortedCandles = allCandles.reverse();
 
-        return allCandles.reverse(); // Du plus ancien au plus récent
+        // Logger les timestamps de début et fin réels
+        if (sortedCandles.length > 0) {
+            const actualStartDate = new Date(sortedCandles[0][0] * 1000);
+            const actualEndDate = new Date(sortedCandles[sortedCandles.length - 1][0] * 1000);
+            const actualDays = (sortedCandles.length / 60 / 24).toFixed(1);
+
+            logger.info(`✅ Récupération terminée: ${sortedCandles.length} candles (~${actualDays} jours)`);
+            logger.info(`   Période réelle: ${actualStartDate.toISOString()} → ${actualEndDate.toISOString()}`);
+
+            // Calculer le gap avec le moment présent
+            const gapSeconds = nowTimestamp - sortedCandles[sortedCandles.length - 1][0];
+            const gapMinutes = Math.floor(gapSeconds / 60);
+            const gapHours = Math.floor(gapMinutes / 60);
+
+            if (gapMinutes > 60) {
+                logger.warn(`⚠️ Gap détecté: ${gapHours}h${gapMinutes % 60}m entre la fin des données historiques et maintenant`);
+                logger.warn(`   Ce gap sera comblé par la collecte temps réel dès l'activation du token`);
+            } else if (gapMinutes > 0) {
+                logger.info(`ℹ️ Gap de ${gapMinutes}min avec le présent (normal pour l'API GeckoTerminal)`);
+            }
+        }
+
+        return sortedCandles;
     }
 }
 
