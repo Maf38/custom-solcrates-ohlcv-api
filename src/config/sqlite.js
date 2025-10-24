@@ -42,17 +42,66 @@ class SQLiteManager {
                 symbol TEXT NOT NULL,
                 is_active BOOLEAN DEFAULT true,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                -- Nouveaux champs pour l'initialisation historique
+                initialization_status TEXT DEFAULT 'pending',
+                initialization_started_at INTEGER,
+                initialization_completed_at INTEGER,
+                initialization_progress INTEGER DEFAULT 0,
+                initialization_error TEXT,
+                main_pool_id TEXT,
+                historical_data_start_date INTEGER,
+                historical_data_end_date INTEGER
             )
         `);
+
+        // Migrer les données existantes si nécessaire
+        this.migrateExistingTokens();
 
         // Index pour améliorer les performances
         this.db.exec(`
             CREATE INDEX IF NOT EXISTS idx_tokens_active ON tokens(is_active);
             CREATE INDEX IF NOT EXISTS idx_tokens_symbol ON tokens(symbol);
+            CREATE INDEX IF NOT EXISTS idx_tokens_init_status ON tokens(initialization_status);
         `);
 
         logger.info('Tables SQLite créées avec succès');
+    }
+
+    migrateExistingTokens() {
+        try {
+            // Vérifier si les nouvelles colonnes existent déjà
+            const tableInfo = this.db.prepare("PRAGMA table_info(tokens)").all();
+            const columnNames = tableInfo.map(col => col.name);
+
+            if (!columnNames.includes('initialization_status')) {
+                // Ajouter les nouvelles colonnes
+                logger.info('Migration: ajout des colonnes d\'initialisation historique');
+
+                this.db.exec(`
+                    ALTER TABLE tokens ADD COLUMN initialization_status TEXT DEFAULT 'pending';
+                    ALTER TABLE tokens ADD COLUMN initialization_started_at INTEGER;
+                    ALTER TABLE tokens ADD COLUMN initialization_completed_at INTEGER;
+                    ALTER TABLE tokens ADD COLUMN initialization_progress INTEGER DEFAULT 0;
+                    ALTER TABLE tokens ADD COLUMN initialization_error TEXT;
+                    ALTER TABLE tokens ADD COLUMN main_pool_id TEXT;
+                    ALTER TABLE tokens ADD COLUMN historical_data_start_date INTEGER;
+                    ALTER TABLE tokens ADD COLUMN historical_data_end_date INTEGER;
+                `);
+
+                // Marquer les tokens existants comme 'skipped' (pas besoin d'initialisation)
+                this.db.exec(`
+                    UPDATE tokens
+                    SET initialization_status = 'skipped'
+                    WHERE initialization_status = 'pending'
+                `);
+
+                logger.info('Migration terminée avec succès');
+            }
+        } catch (error) {
+            logger.warn('Erreur lors de la migration (probablement déjà effectuée):', error.message);
+        }
     }
 
     // Méthodes CRUD
@@ -81,9 +130,10 @@ class SQLiteManager {
             SELECT contract_address, symbol, is_active, created_at, updated_at
             FROM tokens
             WHERE is_active = 1
+              AND (initialization_status = 'completed' OR initialization_status = 'skipped')
             ORDER BY symbol
         `);
-        
+
         return stmt.all();
     }
 
@@ -151,8 +201,58 @@ class SQLiteManager {
             SELECT COUNT(*) as count
             FROM tokens
         `);
-        
+
         return stmt.get().count;
+    }
+
+    // Méthodes pour l'initialisation historique
+    getNextPendingInitialization() {
+        const stmt = this.db.prepare(`
+            SELECT *
+            FROM tokens
+            WHERE initialization_status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 1
+        `);
+
+        return stmt.get();
+    }
+
+    updateInitializationStatus(contractAddress, updates) {
+        const fields = [];
+        const values = [];
+
+        Object.entries(updates).forEach(([key, value]) => {
+            fields.push(`${key} = ?`);
+            values.push(value);
+        });
+
+        if (fields.length === 0) {
+            return false;
+        }
+
+        values.push(contractAddress);
+
+        const stmt = this.db.prepare(`
+            UPDATE tokens
+            SET ${fields.join(', ')}
+            WHERE contract_address = ?
+        `);
+
+        const result = stmt.run(...values);
+        return result.changes > 0;
+    }
+
+    getInitializationStats() {
+        const stmt = this.db.prepare(`
+            SELECT
+                initialization_status,
+                COUNT(*) as count
+            FROM tokens
+            GROUP BY initialization_status
+        `);
+
+        return stmt.all();
     }
 
     close() {
@@ -160,6 +260,10 @@ class SQLiteManager {
             this.db.close();
             logger.info('Connexion SQLite fermée');
         }
+    }
+
+    getDb() {
+        return this.db;
     }
 }
 

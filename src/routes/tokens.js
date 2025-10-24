@@ -80,11 +80,69 @@ router.get('/all', async (req, res) => {
     }
 });
 
+// GET /api/tokens/initialization-stats - Récupère les statistiques d'initialisation
+router.get('/initialization-stats', async (req, res) => {
+    try {
+        const stats = Token.getInitializationStats();
+        logger.info('GET /tokens/initialization-stats - Stats récupérées:', stats);
+        res.json({
+            status: 'success',
+            data: {
+                stats: stats
+            }
+        });
+    } catch (error) {
+        logger.error('GET /tokens/initialization-stats - Erreur:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Erreur lors de la récupération des statistiques'
+        });
+    }
+});
+
+// GET /api/tokens/:address/initialization-status - Récupère le statut d'initialisation
+router.get('/:address/initialization-status', async (req, res) => {
+    try {
+        const { address } = req.params;
+
+        const sqliteManager = require('../config/sqlite');
+        const token = sqliteManager.getTokenByAddress(address);
+
+        if (!token) {
+            return res.status(404).json({
+                status: 'error',
+                message: 'Token non trouvé'
+            });
+        }
+
+        res.json({
+            status: 'success',
+            data: {
+                initialization_status: token.initialization_status,
+                initialization_progress: token.initialization_progress,
+                initialization_started_at: token.initialization_started_at,
+                initialization_completed_at: token.initialization_completed_at,
+                initialization_error: token.initialization_error,
+                historical_data_start_date: token.historical_data_start_date,
+                historical_data_end_date: token.historical_data_end_date,
+                main_pool_id: token.main_pool_id
+            }
+        });
+
+    } catch (error) {
+        logger.error('GET /tokens/:address/initialization-status - Erreur:', error);
+        res.status(500).json({
+            status: 'error',
+            message: 'Erreur lors de la récupération du statut'
+        });
+    }
+});
+
 // GET /api/tokens/:address - Récupère un token spécifique
 router.get('/:address', async (req, res) => {
     try {
         const { address } = req.params;
-        
+
         // Vérifier si l'adresse est valide
         if (!validateSolanaAddress(address)) {
             return res.status(400).json({
@@ -94,7 +152,7 @@ router.get('/:address', async (req, res) => {
         }
 
         const token = await Token.findByAddress(address);
-        
+
         if (!token) {
             return res.status(404).json({
                 status: 'error',
@@ -146,25 +204,16 @@ router.post('/',
                 });
             }
 
-            // Créer le nouveau token
+            // Créer le nouveau token avec status 'pending'
             const newToken = await Token.create(contract_address, symbol);
 
-            // Mettre à jour les collecteurs avec la nouvelle liste de tokens
-            const activeTokens = await Token.getAllActive();
-            if (priceCollector) {
-                priceCollector.setTokens(activeTokens);
-            }
-            if (volumeCollector && process.env.VOLUME_ENABLED === 'true') {
-                volumeCollector.setTokens(activeTokens);
-            }
-            if (candleBuilder) {
-                candleBuilder.setTokens(activeTokens);
-            }
+            // NE PAS ajouter aux collecteurs temps réel tout de suite
+            // Ils seront ajoutés automatiquement après l'initialisation historique
 
-            logger.info('POST /tokens - Token créé avec succès:', newToken);
+            logger.info('POST /tokens - Token créé, initialisation historique en attente:', newToken);
             res.status(201).json({
                 status: 'success',
-                message: 'Token ajouté avec succès',
+                message: 'Token ajouté avec succès. Initialisation historique en cours...',
                 data: newToken
             });
 
