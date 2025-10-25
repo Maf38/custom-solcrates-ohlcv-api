@@ -163,6 +163,11 @@ class TokenFinal {
     static getInitializationStats() {
         return sqliteManager.getInitializationStats();
     }
+
+    // Alias pour compatibilité
+    static async getByAddress(contractAddress) {
+        return this.findByAddress(contractAddress);
+    }
 }
 
 module.exports = TokenFinal;

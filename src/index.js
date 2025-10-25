@@ -4,6 +4,7 @@ const swaggerUi = require('swagger-ui-express');
 const swaggerDocument = require('./config/swagger');
 const tokensRouter = require('./routes/tokens');
 const ohlcvRouter = require('./routes/ohlcv');
+const backfillRouter = require('./routes/backfill');
 const PriceCollector = require('./services/PriceCollector');
 const VolumeCollector = require('./services/VolumeCollector');
 const CandleBuilder = require('./services/CandleBuilder');
@@ -83,6 +84,7 @@ app.use((err, req, res, next) => {
 // Routes
 app.use('/api/tokens', tokensRouter);
 app.use('/api/ohlcv', ohlcvRouter);
+app.use('/api/backfill', backfillRouter);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // Initialisation des collecteurs
