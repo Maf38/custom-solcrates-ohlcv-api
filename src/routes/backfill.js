@@ -80,11 +80,21 @@ router.post('/token', async (req, res) => {
 
         const results = await backfillService.backfillToken(tokenAddress, start, end);
 
-        res.json({
-            status: 'success',
-            message: 'Backfill terminé',
-            data: results
-        });
+        // Vérifier si le backfill a réussi ou échoué
+        if (results.success) {
+            res.json({
+                status: 'success',
+                message: 'Backfill terminé avec succès',
+                data: results
+            });
+        } else {
+            // Le backfill a échoué après tous les retries
+            res.status(500).json({
+                status: 'error',
+                message: `Backfill échoué: ${results.error}`,
+                data: results
+            });
+        }
 
     } catch (error) {
         logger.error('Erreur dans /api/backfill/token:', error);

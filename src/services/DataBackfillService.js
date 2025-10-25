@@ -15,6 +15,30 @@ class DataBackfillService {
         this.geckoTerminalClient = new GeckoTerminalClient();
         this.QUALITY_THRESHOLD = 0.90;
         this.isProcessing = false;
+        this.MAX_RETRIES = 3;
+        this.RETRY_DELAY_MS = 5000; // 5 secondes de base
+    }
+
+    /**
+     * Retry avec backoff exponentiel
+     */
+    async retryWithBackoff(fn, context = '', attempt = 1) {
+        try {
+            return await fn();
+        } catch (error) {
+            if (attempt >= this.MAX_RETRIES) {
+                logger.error(`❌ Échec après ${this.MAX_RETRIES} tentatives: ${context}`);
+                throw error;
+            }
+
+            const delay = this.RETRY_DELAY_MS * Math.pow(2, attempt - 1); // Backoff exponentiel: 5s, 10s, 20s
+            logger.warn(`⚠️ Erreur ${context} (tentative ${attempt}/${this.MAX_RETRIES}): ${error.message}`);
+            logger.info(`   Nouvelle tentative dans ${delay}ms...`);
+
+            await new Promise(resolve => setTimeout(resolve, delay));
+
+            return this.retryWithBackoff(fn, context, attempt + 1);
+        }
     }
 
     /**
@@ -27,7 +51,10 @@ class DataBackfillService {
         let poolId = token.main_pool_id;
         if (!poolId) {
             logger.info(`Recherche du pool ID pour ${token.symbol}...`);
-            poolId = await this.geckoTerminalClient.getMainPoolId(token.contract_address);
+            poolId = await this.retryWithBackoff(
+                () => this.geckoTerminalClient.getMainPoolId(token.contract_address),
+                `getMainPoolId pour ${token.symbol}`
+            );
             logger.info(`Pool ID trouvé: ${poolId}`);
         }
 
@@ -35,13 +62,16 @@ class DataBackfillService {
         const daysToFetch = Math.ceil((endDate - startDate) / (24 * 60 * 60 * 1000));
         logger.info(`Récupération de ${daysToFetch} jours de données...`);
 
-        // Récupérer les candles depuis GeckoTerminal
-        const candles = await this.geckoTerminalClient.fetchOHLCVHistory(
-            poolId,
-            daysToFetch,
-            (current, total) => {
-                logger.debug(`Progression: ${current}/${total} requêtes`);
-            }
+        // Récupérer les candles depuis GeckoTerminal avec retry
+        const candles = await this.retryWithBackoff(
+            () => this.geckoTerminalClient.fetchOHLCVHistory(
+                poolId,
+                daysToFetch,
+                (current, total) => {
+                    logger.debug(`Progression: ${current}/${total} requêtes`);
+                }
+            ),
+            `fetchOHLCVHistory pour ${token.symbol}`
         );
 
         // Filtrer les candles dans la période demandée
@@ -452,6 +482,7 @@ class DataBackfillService {
         }
 
         this.isProcessing = true;
+        const startTime = Date.now();
 
         try {
             logger.info(`\n${'='.repeat(80)}`);
@@ -464,11 +495,19 @@ class DataBackfillService {
                 throw new Error(`Token ${tokenAddress} non trouvé`);
             }
 
-            // Étape 1: Récupérer et insérer raw_prices
-            const step1Results = await this.fetchAndInsertMissingRawPrices(token, startDate, endDate);
+            // Étape 1: Récupérer et insérer raw_prices (avec retry)
+            const step1Results = await this.retryWithBackoff(
+                () => this.fetchAndInsertMissingRawPrices(token, startDate, endDate),
+                `Étape 1 pour ${token.symbol}`
+            );
 
-            // Étape 2: Recalculer les bougies
-            const step2Results = await this.recalculateCandlesIntelligently(token, startDate, endDate);
+            // Étape 2: Recalculer les bougies (avec retry)
+            const step2Results = await this.retryWithBackoff(
+                () => this.recalculateCandlesIntelligently(token, startDate, endDate),
+                `Étape 2 pour ${token.symbol}`
+            );
+
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
 
             const results = {
                 token: token.symbol,
@@ -479,6 +518,7 @@ class DataBackfillService {
                 },
                 step1: step1Results,
                 step2: step2Results,
+                duration: `${duration}s`,
                 success: true
             };
 
@@ -487,9 +527,34 @@ class DataBackfillService {
             logger.info(`   Raw prices insérées: ${step1Results.rawPricesInserted}`);
             logger.info(`   Bougies recalculées: ${step2Results.candlesRecalculated}`);
             logger.info(`   Bougies créées: ${step2Results.candlesCreated}`);
+            logger.info(`   Durée totale: ${duration}s`);
             logger.info('='.repeat(80));
 
             return results;
+
+        } catch (error) {
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+
+            logger.error('='.repeat(80));
+            logger.error('❌ BACKFILL ÉCHOUÉ');
+            logger.error(`   Token: ${tokenAddress}`);
+            logger.error(`   Erreur: ${error.message}`);
+            logger.error(`   Durée avant échec: ${duration}s`);
+            logger.error('='.repeat(80));
+
+            // Retourner une erreur structurée
+            return {
+                token: tokenAddress,
+                tokenAddress,
+                period: {
+                    start: startDate.toISOString(),
+                    end: endDate.toISOString()
+                },
+                duration: `${duration}s`,
+                success: false,
+                error: error.message,
+                errorType: error.constructor.name
+            };
 
         } finally {
             this.isProcessing = false;

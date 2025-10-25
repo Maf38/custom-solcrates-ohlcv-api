@@ -482,3 +482,183 @@ docker exec ohlcv-backup-service find /backups -name "*.tar.gz" -mtime -7
 - Le service s'arrête automatiquement si InfluxDB n'est pas accessible
 - Les backups sont compressés pour économiser l'espace disque
 - En cas de problème, vérifiez les logs et les variables d'environnement
+
+---
+
+## Système d'Initialisation Historique
+
+Lorsqu'un nouveau token est ajouté, le système récupère automatiquement **30 jours d'historique** depuis GeckoTerminal.
+
+### Fonctionnement
+
+1. **Ajout d'un token** via `POST /api/tokens`
+   - Créé avec `is_active = false` et `initialization_status = 'pending'`
+   - Placé dans la queue d'initialisation
+
+2. **Traitement automatique** par `HistoricalDataInitializer`
+   - Récupère le pool principal sur GeckoTerminal
+   - Télécharge les bougies minute des 30 derniers jours
+   - Convertit en raw_prices pour cohérence avec la collecte temps réel
+   - Construit les bougies OHLCV pour tous les timeframes (1m, 5m, 15m, 1h, 4h, 1d)
+   - Calcule RSI et EMA pour chaque bougie
+   - Active le token (`is_active = true`)
+
+3. **Collecte temps réel** démarre automatiquement après initialisation
+
+### Surveillance
+
+```bash
+# Voir les stats d'initialisation
+curl http://localhost:3002/api/tokens/initialization-stats
+
+# Voir le statut d'un token spécifique
+curl http://localhost:3002/api/tokens/{address}/initialization-status
+```
+
+### Résultats attendus
+
+- **Gros tokens** (ex: MOODENG): ~40-50% de complétude (beaucoup de transactions)
+- **Petits tokens** (ex: SWOGE): ~5-10% de complétude (peu de transactions)
+
+**Note**: GeckoTerminal ne retourne que les minutes avec activité. Les gaps sont normaux pour les tokens peu liquides.
+
+---
+
+## Système de Rattrapage de Données (Backfill)
+
+Le backfill permet de combler intelligemment les lacunes de données en 2 étapes :
+
+### Stratégie
+
+**Étape 1 : Raw Prices**
+- Récupère les bougies minute depuis GeckoTerminal
+- Vérifie quelles raw_prices existent déjà en InfluxDB
+- **Insère uniquement les données manquantes** (pas de doublons)
+
+**Étape 2 : Recalcul Sélectif**
+- Parcourt chaque période de chaque timeframe
+- **Skip si qualité OK** (quality_factor ≥ 90% ET rsi_quality ≥ 90%)
+- **Recalcule** si qualité insuffisante
+- **Crée** si bougie manquante
+
+### Gestion d'Erreurs Robuste
+
+- **Retry automatique** avec backoff exponentiel (5s, 10s, 20s)
+- **3 tentatives maximum** par opération
+- **Logs détaillés** de chaque tentative
+- **Nettoyage automatique** du flag `isProcessing` même en cas d'erreur
+
+### API Endpoints
+
+#### 1. Backfill d'un token
+
+```bash
+# Option A: Période explicite
+curl -X POST http://localhost:3002/api/backfill/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tokenAddress": "ADSXPGwP3riuvqYtwqogCD4Rfn1a6NASqaSpThpsmoon",
+    "startDate": "2025-10-20T00:00:00Z",
+    "endDate": "2025-10-22T23:59:59Z"
+  }'
+
+# Option B: Durée relative (heures)
+curl -X POST http://localhost:3002/api/backfill/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tokenAddress": "ADSXPGwP3riuvqYtwqogCD4Rfn1a6NASqaSpThpsmoon",
+    "hours": 24
+  }'
+
+# Option C: Durée relative (jours)
+curl -X POST http://localhost:3002/api/backfill/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tokenAddress": "ADSXPGwP3riuvqYtwqogCD4Rfn1a6NASqaSpThpsmoon",
+    "days": 7
+  }'
+```
+
+#### 2. Backfill global (rupture de service)
+
+```bash
+# Rattraper les 6 dernières heures pour TOUS les tokens
+curl -X POST http://localhost:3002/api/backfill/all \
+  -H "Content-Type: application/json" \
+  -d '{"hours": 6}'
+
+# Période spécifique
+curl -X POST http://localhost:3002/api/backfill/all \
+  -H "Content-Type: application/json" \
+  -d '{
+    "startDate": "2025-10-23T12:00:00Z",
+    "endDate": "2025-10-23T18:00:00Z"
+  }'
+```
+
+#### 3. Vérifier le statut
+
+```bash
+curl http://localhost:3002/api/backfill/status
+```
+
+### Cas d'usage
+
+**Panne du service**
+```bash
+# Le service était arrêté du 23/10 12h au 23/10 18h
+curl -X POST http://localhost:3002/api/backfill/all \
+  -H "Content-Type: application/json" \
+  -d '{
+    "startDate": "2025-10-23T12:00:00Z",
+    "endDate": "2025-10-23T18:00:00Z"
+  }'
+```
+
+**Token avec données de mauvaise qualité**
+```bash
+# Améliorer la qualité RSI des 7 derniers jours
+curl -X POST http://localhost:3002/api/backfill/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tokenAddress": "ADSXPGwP3riuvqYtwqogCD4Rfn1a6NASqaSpThpsmoon",
+    "days": 7
+  }'
+```
+
+### Réponse type
+
+```json
+{
+  "status": "success",
+  "message": "Backfill terminé avec succès",
+  "data": {
+    "token": "EMULITES",
+    "period": {
+      "start": "2025-10-25T06:16:14.957Z",
+      "end": "2025-10-25T07:16:14.957Z"
+    },
+    "step1": {
+      "candlesFromGecko": 45,
+      "rawPricesInserted": 38,
+      "rawPricesSkipped": 7
+    },
+    "step2": {
+      "totalPeriods": 83,
+      "candlesRecalculated": 64,
+      "candlesSkipped": 16,
+      "candlesCreated": 3
+    },
+    "duration": "8.5s",
+    "success": true
+  }
+}
+```
+
+### Limitations
+
+- **Un seul backfill à la fois** (`isProcessing` empêche les conflits)
+- **Dépendant de GeckoTerminal** (si leurs données ont des gaps, on ne peut pas les combler)
+- **Rate limiting** géré automatiquement (retry en cas de 429)
+
+---
