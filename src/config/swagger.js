@@ -691,6 +691,289 @@ const swaggerDefinition = {
                     }
                 }
             }
+        },
+        '/api/backfill/token': {
+            post: {
+                tags: ['Backfill'],
+                summary: 'Rattrapage de données pour un token spécifique',
+                description: 'Récupère et recalcule intelligemment les données manquantes pour un token sur une période donnée. Utilise 2 étapes: (1) Récupération des raw_prices manquantes depuis GeckoTerminal, (2) Recalcul sélectif des bougies avec qualité < 90%.',
+                requestBody: {
+                    required: true,
+                    content: {
+                        'application/json': {
+                            schema: {
+                                oneOf: [
+                                    {
+                                        type: 'object',
+                                        required: ['tokenAddress', 'startDate', 'endDate'],
+                                        properties: {
+                                            tokenAddress: {
+                                                type: 'string',
+                                                description: 'Adresse du contrat du token',
+                                                example: 'ADSXPGwP3riuvqYtwqogCD4Rfn1a6NASqaSpThpsmoon'
+                                            },
+                                            startDate: {
+                                                type: 'string',
+                                                format: 'date-time',
+                                                description: 'Date de début (ISO 8601)',
+                                                example: '2025-10-20T00:00:00Z'
+                                            },
+                                            endDate: {
+                                                type: 'string',
+                                                format: 'date-time',
+                                                description: 'Date de fin (ISO 8601)',
+                                                example: '2025-10-22T23:59:59Z'
+                                            }
+                                        }
+                                    },
+                                    {
+                                        type: 'object',
+                                        required: ['tokenAddress', 'hours'],
+                                        properties: {
+                                            tokenAddress: {
+                                                type: 'string',
+                                                description: 'Adresse du contrat du token',
+                                                example: 'ADSXPGwP3riuvqYtwqogCD4Rfn1a6NASqaSpThpsmoon'
+                                            },
+                                            hours: {
+                                                type: 'integer',
+                                                description: 'Nombre d\'heures à rattraper (relatif à maintenant)',
+                                                example: 24
+                                            }
+                                        }
+                                    },
+                                    {
+                                        type: 'object',
+                                        required: ['tokenAddress', 'days'],
+                                        properties: {
+                                            tokenAddress: {
+                                                type: 'string',
+                                                description: 'Adresse du contrat du token',
+                                                example: 'ADSXPGwP3riuvqYtwqogCD4Rfn1a6NASqaSpThpsmoon'
+                                            },
+                                            days: {
+                                                type: 'integer',
+                                                description: 'Nombre de jours à rattraper (relatif à maintenant)',
+                                                example: 7
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+                responses: {
+                    '200': {
+                        description: 'Backfill terminé avec succès',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        status: {
+                                            type: 'string',
+                                            example: 'success'
+                                        },
+                                        message: {
+                                            type: 'string',
+                                            example: 'Backfill terminé'
+                                        },
+                                        data: {
+                                            type: 'object',
+                                            properties: {
+                                                token: {
+                                                    type: 'string',
+                                                    example: 'FROGG'
+                                                },
+                                                tokenAddress: {
+                                                    type: 'string',
+                                                    example: 'ADSXPGwP3riuvqYtwqogCD4Rfn1a6NASqaSpThpsmoon'
+                                                },
+                                                period: {
+                                                    type: 'object',
+                                                    properties: {
+                                                        start: { type: 'string', format: 'date-time' },
+                                                        end: { type: 'string', format: 'date-time' }
+                                                    }
+                                                },
+                                                step1: {
+                                                    type: 'object',
+                                                    properties: {
+                                                        candlesFromGecko: { type: 'integer', description: 'Candles récupérées depuis GeckoTerminal' },
+                                                        rawPricesInserted: { type: 'integer', description: 'Raw prices insérées (nouvelles)' },
+                                                        rawPricesSkipped: { type: 'integer', description: 'Raw prices skippées (déjà existantes)' }
+                                                    }
+                                                },
+                                                step2: {
+                                                    type: 'object',
+                                                    properties: {
+                                                        totalPeriods: { type: 'integer', description: 'Nombre total de périodes vérifiées' },
+                                                        candlesRecalculated: { type: 'integer', description: 'Bougies recalculées (qualité < 90%)' },
+                                                        candlesSkipped: { type: 'integer', description: 'Bougies skippées (qualité OK)' },
+                                                        candlesCreated: { type: 'integer', description: 'Bougies créées (manquantes)' }
+                                                    }
+                                                },
+                                                success: { type: 'boolean' }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    '400': {
+                        description: 'Paramètres invalides'
+                    },
+                    '500': {
+                        description: 'Erreur serveur'
+                    }
+                }
+            }
+        },
+        '/api/backfill/all': {
+            post: {
+                tags: ['Backfill'],
+                summary: 'Rattrapage de données pour tous les tokens (rupture de service)',
+                description: 'Récupère et recalcule intelligemment les données manquantes pour TOUS les tokens actifs sur une période donnée. Utile après une panne ou interruption du service.',
+                requestBody: {
+                    required: true,
+                    content: {
+                        'application/json': {
+                            schema: {
+                                oneOf: [
+                                    {
+                                        type: 'object',
+                                        required: ['startDate', 'endDate'],
+                                        properties: {
+                                            startDate: {
+                                                type: 'string',
+                                                format: 'date-time',
+                                                description: 'Date de début (ISO 8601)',
+                                                example: '2025-10-23T12:00:00Z'
+                                            },
+                                            endDate: {
+                                                type: 'string',
+                                                format: 'date-time',
+                                                description: 'Date de fin (ISO 8601)',
+                                                example: '2025-10-23T18:00:00Z'
+                                            }
+                                        }
+                                    },
+                                    {
+                                        type: 'object',
+                                        required: ['hours'],
+                                        properties: {
+                                            hours: {
+                                                type: 'integer',
+                                                description: 'Nombre d\'heures à rattraper (relatif à maintenant)',
+                                                example: 6
+                                            }
+                                        }
+                                    },
+                                    {
+                                        type: 'object',
+                                        required: ['days'],
+                                        properties: {
+                                            days: {
+                                                type: 'integer',
+                                                description: 'Nombre de jours à rattraper (relatif à maintenant)',
+                                                example: 1
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    }
+                },
+                responses: {
+                    '200': {
+                        description: 'Backfill global terminé',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        status: { type: 'string', example: 'success' },
+                                        message: { type: 'string', example: 'Backfill global terminé' },
+                                        data: {
+                                            type: 'object',
+                                            properties: {
+                                                totalTokens: { type: 'integer' },
+                                                successful: { type: 'integer' },
+                                                failed: { type: 'integer' },
+                                                period: {
+                                                    type: 'object',
+                                                    properties: {
+                                                        start: { type: 'string', format: 'date-time' },
+                                                        end: { type: 'string', format: 'date-time' }
+                                                    }
+                                                },
+                                                results: {
+                                                    type: 'array',
+                                                    items: {
+                                                        type: 'object',
+                                                        properties: {
+                                                            token: { type: 'string' },
+                                                            tokenAddress: { type: 'string' },
+                                                            step1: { type: 'object' },
+                                                            step2: { type: 'object' },
+                                                            success: { type: 'boolean' }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    '400': {
+                        description: 'Paramètres invalides'
+                    },
+                    '500': {
+                        description: 'Erreur serveur'
+                    }
+                }
+            }
+        },
+        '/api/backfill/status': {
+            get: {
+                tags: ['Backfill'],
+                summary: 'Vérifier le statut du système de backfill',
+                description: 'Retourne si un backfill est en cours et le seuil de qualité configuré',
+                responses: {
+                    '200': {
+                        description: 'Statut du backfill',
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    type: 'object',
+                                    properties: {
+                                        status: { type: 'string', example: 'success' },
+                                        data: {
+                                            type: 'object',
+                                            properties: {
+                                                isProcessing: {
+                                                    type: 'boolean',
+                                                    description: 'True si un backfill est en cours'
+                                                },
+                                                qualityThreshold: {
+                                                    type: 'number',
+                                                    description: 'Seuil de qualité (0.9 = 90%)',
+                                                    example: 0.9
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 };
