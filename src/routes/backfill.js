@@ -1,9 +1,7 @@
 const express = require('express');
 const router = express.Router();
-const DataBackfillService = require('../services/DataBackfillService');
+const backfillService = require('../services/DataBackfillService');
 const logger = require('../config/logger');
-
-const backfillService = new DataBackfillService();
 
 /**
  * POST /api/backfill/token
